@@ -18,7 +18,11 @@ public class CacheRpcClient {
         Map<String, Object> data = new HashMap<>();
         data.put("operation", "get");
         data.put("key", key);
-        return rabbitTemplate.convertSendAndReceive("rpc", routingKey, data);
+        Object result = rabbitTemplate.convertSendAndReceive("rpc", routingKey, data);
+        if (result instanceof NotFoundMarker) {
+            return null;
+        }
+        return result;
     }
     public void setToOtherNode(String routingKey, String key, Object value) {
         Map<String, Object> data = new HashMap<>();
@@ -29,11 +33,11 @@ public class CacheRpcClient {
         rabbitTemplate.convertAndSend("rpc", routingKey, data);
     }
 
-    public Integer deleteFromOtherNode(String routingKey, String key) {
+    public Object deleteFromOtherNode(String routingKey, String key) {
         Map<String, Object> data = new HashMap<>();
         data.put("operation", "delete");
         data.put("key", key);
-        return rabbitTemplate.convertSendAndReceiveAsType("rpc", routingKey, data,ParameterizedTypeReference.forType(Integer.class));
+        return rabbitTemplate.convertSendAndReceive("rpc", routingKey, data);
     }
 }
 

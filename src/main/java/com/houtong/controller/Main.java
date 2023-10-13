@@ -8,9 +8,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-import java.util.NoSuchElementException;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/")
@@ -32,14 +36,21 @@ public class Main {
         Object value = memoryDatabase.get(key);
 
         if (value == null) {
+            List<CompletableFuture<Object>> futures = new ArrayList<>();
+
             for (String node : nodeConfig.getNodes()) {
                 if (!node.equals(nodeConfig.getCurrentNode())) {
-                    value = rpcClient.getFromOtherNode(node, key);
-                    if (value != null){
-                        break;
-                    }
+                    CompletableFuture<Object> future = CompletableFuture.supplyAsync(() -> rpcClient.getFromOtherNode(node, key));
+                    futures.add(future);
                 }
             }
+
+            // 等待所有异步任务完成，并查找非null的值
+            value = futures.stream()
+                    .map(CompletableFuture::join)
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElse(null);
         }
 
         if (value == null) {
@@ -64,15 +75,27 @@ public class Main {
             memoryDatabase.put(key, value);  // 更新当前节点的值
         } else {
             boolean keyExistsInOtherNode = false;
+            List<CompletableFuture<Object>> futures = new ArrayList<>();
+
+            // 使用CompletableFuture来异步获取值
             for (String node : nodeConfig.getNodes()) {
                 if (!node.equals(nodeConfig.getCurrentNode())) {
-                    // 检查其他节点
-                    Object valueInOtherNode = rpcClient.getFromOtherNode(node, key);
-                    if (valueInOtherNode != null) {
-                        rpcClient.setToOtherNode(node , key, value);
-                        keyExistsInOtherNode = true;
-                        break;
-                    }
+                    CompletableFuture<Object> future = CompletableFuture.supplyAsync(() -> rpcClient.getFromOtherNode(node, key));
+                    futures.add(future);
+                }
+            }
+
+            // 等待所有的异步任务完成
+            List<Object> results = futures.stream()
+                    .map(CompletableFuture::join)
+                    .collect(Collectors.toList());
+
+            for (int i = 0; i < results.size(); i++) {
+                if (results.get(i) != null) {
+                    String node = nodeConfig.getNodes().get(i);
+                    rpcClient.setToOtherNode(node, key, value);
+                    keyExistsInOtherNode = true;
+                    break;
                 }
             }
             // 如果所有节点都没有这个key，根据策略存储它
@@ -93,20 +116,37 @@ public class Main {
     @DeleteMapping("/{key}")
     public ResponseEntity<String> deleteKey(@PathVariable("key") String key) {
         if (memoryDatabase.containsKey(key)) {
-            memoryDatabase.remove(key);  // 删除当前节点的值
+            memoryDatabase.remove(key);
             return new ResponseEntity<>("1", HttpStatus.OK);
         } else {
+            AtomicReference<ResponseEntity<String>> response = new AtomicReference<>(new ResponseEntity<>("0", HttpStatus.OK));
+            CountDownLatch latch = new CountDownLatch(1);
+            AtomicInteger completedTasks = new AtomicInteger(0);  // 这个计数器用于跟踪已完成的任务数量
+            int totalTasks = (int) nodeConfig.getNodes().stream().filter(node -> !node.equals(nodeConfig.getCurrentNode())).count();
+
             for (String node : nodeConfig.getNodes()) {
                 if (!node.equals(nodeConfig.getCurrentNode())) {
-                    Integer delete_num = rpcClient.deleteFromOtherNode(node, key);
-                    if(delete_num == 1)
-                    {
-                        return new ResponseEntity<>("1", HttpStatus.OK);
-                    }
+                    CompletableFuture.supplyAsync(() -> (Integer) rpcClient.deleteFromOtherNode(node, key))
+                            .thenAccept(result -> {
+                                if(result == 1 && response.get().equals(new ResponseEntity<>("0", HttpStatus.OK))) {
+                                    //有一个其他节点成功删除了key
+                                    response.set(new ResponseEntity<>("1", HttpStatus.OK));
+                                    latch.countDown();
+                                } else if (completedTasks.incrementAndGet() == totalTasks) {  // 所有的任务都完成了
+                                    latch.countDown();
+                                }
+                            });
                 }
             }
+
+            try {
+                latch.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            return response.get();
         }
-        return new ResponseEntity<>("0", HttpStatus.OK);
     }
 
 

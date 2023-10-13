@@ -5,6 +5,8 @@ import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -12,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class AMQPConfig {
+
     @Bean
     public Queue node1Queue() {
         return new Queue("node1");
@@ -22,6 +25,10 @@ public class AMQPConfig {
         return new Queue("node2");
     }
 
+    @Bean
+    public Queue replyQueue(){
+        return new Queue("rpc.replies");
+    }
     @Bean
     public Queue node3Queue() {
         return new Queue("node3");
