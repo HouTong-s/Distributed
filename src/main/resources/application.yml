@@ -1,0 +1,42 @@
+nodes:
+  - node1
+  - node2
+  - node3
+spring:
+  rabbitmq:
+    host: localhost # your-rabbitmq-host
+    port: 5672  # 默认的RabbitMQ端口
+    username: guest # 默认为 'guest'
+    password: guest # 默认为 'guest'
+    virtual-host: / # 默认为 '/'
+
+---
+spring:
+  config:
+    activate:
+      on-profile: node1
+queue:
+  name: node1
+
+currentNode: node1
+
+---
+spring:
+  config:
+    activate:
+      on-profile: node2
+queue:
+  name: node2
+
+currentNode: node2
+
+---
+spring:
+  config:
+    activate:
+      on-profile: node3
+
+queue:
+  name: node3
+
+currentNode: node3
